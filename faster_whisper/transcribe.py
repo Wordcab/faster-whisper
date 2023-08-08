@@ -643,13 +643,13 @@ class WhisperModel:
                 kwargs = {
                     "beam_size": options.beam_size,
                     "patience": options.patience,
+                    "repetition_penalty": options.repetition_penalty,
                 }
 
             result = self.model.generate(
                 encoder_output,
                 [prompt],
                 length_penalty=options.length_penalty,
-                repetition_penalty=options.repetition_penalty,
                 no_repeat_ngram_size=options.no_repeat_ngram_size,
                 max_length=self.max_length,
                 return_scores=True,
