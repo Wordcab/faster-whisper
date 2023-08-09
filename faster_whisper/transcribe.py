@@ -47,10 +47,12 @@ class TranscriptionOptions(NamedTuple):
     best_of: int
     patience: float
     length_penalty: float
+    repetition_penalty: float
     log_prob_threshold: Optional[float]
     no_speech_threshold: Optional[float]
     compression_ratio_threshold: Optional[float]
     condition_on_previous_text: bool
+    prompt_reset_on_temperature: float
     temperatures: List[float]
     initial_prompt: Optional[Union[str, Iterable[int]]]
     prefix: Optional[str]
@@ -159,6 +161,7 @@ class WhisperModel:
         best_of: int = 5,
         patience: float = 1,
         length_penalty: float = 1,
+        repetition_penalty: float = 1,
         temperature: Union[float, List[float], Tuple[float, ...]] = [
             0.0,
             0.2,
@@ -171,6 +174,7 @@ class WhisperModel:
         log_prob_threshold: Optional[float] = -1.0,
         no_speech_threshold: Optional[float] = 0.6,
         condition_on_previous_text: bool = True,
+        prompt_reset_on_temperature: float = 0.5,
         initial_prompt: Optional[Union[str, Iterable[int]]] = None,
         prefix: Optional[str] = None,
         suppress_blank: bool = True,
@@ -195,6 +199,8 @@ class WhisperModel:
           best_of: Number of candidates when sampling with non-zero temperature.
           patience: Beam search patience factor.
           length_penalty: Exponential length penalty constant.
+          repetition_penalty: Penalty applied to the score of previously generated tokens
+            (set > 1 to penalize).
           temperature: Temperature for sampling. It can be a tuple of temperatures,
             which will be successively used upon failures according to either
             `compression_ratio_threshold` or `log_prob_threshold`.
@@ -209,6 +215,8 @@ class WhisperModel:
             as a prompt for the next window; disabling may make the text inconsistent across
             windows, but the model becomes less prone to getting stuck in a failure loop,
             such as repetition looping or timestamps going out of sync.
+          prompt_reset_on_temperature: Resets prompt if temperature is above this value.
+            Arg has effect only if condition_on_previous_text is True.
           initial_prompt: Optional text string or iterable of token ids to provide as a
             prompt for the first window.
           prefix: Optional text to provide as a prefix for the first window.
@@ -315,10 +323,12 @@ class WhisperModel:
             best_of=best_of,
             patience=patience,
             length_penalty=length_penalty,
+            repetition_penalty=repetition_penalty,
             log_prob_threshold=log_prob_threshold,
             no_speech_threshold=no_speech_threshold,
             compression_ratio_threshold=compression_ratio_threshold,
             condition_on_previous_text=condition_on_previous_text,
+            prompt_reset_on_temperature=prompt_reset_on_temperature,
             temperatures=(
                 temperature if isinstance(temperature, (list, tuple)) else [temperature]
             ),
@@ -333,7 +343,13 @@ class WhisperModel:
             append_punctuations=append_punctuations,
         )
 
-        segments = self.generate_segments(features, tokenizer, options, encoder_output)
+        segments = self.generate_segments(
+            features,
+            tokenizer,
+            options,
+            speech_chunks,
+            encoder_output
+        )
 
         if speech_chunks:
             segments = restore_speech_timestamps(segments, speech_chunks, sampling_rate)
@@ -354,6 +370,7 @@ class WhisperModel:
         features: np.ndarray,
         tokenizer: Tokenizer,
         options: TranscriptionOptions,
+        speech_chunks: List[dict] = None,
         encoder_output: Optional[ctranslate2.StorageView] = None,
     ) -> Iterable[Segment]:
         content_frames = features.shape[-1] - self.feature_extractor.nb_max_frames
@@ -514,6 +531,7 @@ class WhisperModel:
                     options.prepend_punctuations,
                     options.append_punctuations,
                     last_speech_timestamp=last_speech_timestamp,
+                    speech_chunks=speech_chunks
                 )
 
                 word_end_timestamps = [
@@ -559,7 +577,17 @@ class WhisperModel:
                     ),
                 )
 
-            if not options.condition_on_previous_text or temperature > 0.5:
+            if (
+                not options.condition_on_previous_text
+                or temperature > options.prompt_reset_on_temperature
+            ):
+                if options.condition_on_previous_text:
+                    self.logger.debug(
+                        "Reset prompt. prompt_reset_on_temperature threshold is met %f > %f",
+                        temperature,
+                        options.prompt_reset_on_temperature,
+                    )
+
                 prompt_reset_since = len(all_tokens)
 
     def encode(self, features: np.ndarray) -> ctranslate2.StorageView:
@@ -592,6 +620,7 @@ class WhisperModel:
                 kwargs = {
                     "beam_size": 1,
                     "num_hypotheses": options.best_of,
+                    "repetition_penalty": options.repetition_penalty,  # On retries
                     "sampling_topk": 0,
                     "sampling_temperature": temperature,
                 }
@@ -599,6 +628,7 @@ class WhisperModel:
                 kwargs = {
                     "beam_size": options.beam_size,
                     "patience": options.patience,
+                    "repetition_penalty": 1.0,  # 1st pass
                 }
 
             result = self.model.generate(
@@ -713,6 +743,7 @@ class WhisperModel:
         prepend_punctuations: str,
         append_punctuations: str,
         last_speech_timestamp: float,
+        speech_chunks: List[dict] = None
     ):
         if len(segments) == 0:
             return
@@ -726,24 +757,26 @@ class WhisperModel:
         alignment = self.find_alignment(
             tokenizer, text_tokens, encoder_output, num_frames
         )
-        word_durations = np.array([word["end"] - word["start"] for word in alignment])
+
+        if speech_chunks:
+            word_durations = np.array([round((word["end"] - word["start"])/16000, 2) for word in speech_chunks])
+        else:
+            word_durations = np.array([word["end"] - word["start"] for word in alignment])
         word_durations = word_durations[word_durations.nonzero()]
+
         median_duration = np.median(word_durations) if len(word_durations) > 0 else 0.0
         max_duration = median_duration * 2
 
-        # hack: truncate long words at sentence boundaries.
-        # a better segmentation algorithm based on VAD should be able to replace this.
         if len(word_durations) > 0:
             sentence_end_marks = ".。!！?？"
-            # ensure words at sentence boundaries
-            # are not longer than twice the median word duration.
-            for i in range(1, len(alignment)):
+            for i in range(0, len(alignment)):
                 if alignment[i]["end"] - alignment[i]["start"] > max_duration:
                     if alignment[i]["word"] in sentence_end_marks:
                         alignment[i]["end"] = alignment[i]["start"] + max_duration
                     elif alignment[i - 1]["word"] in sentence_end_marks:
                         alignment[i]["start"] = alignment[i]["end"] - max_duration
-
+                elif alignment[i]["word"] in sentence_end_marks and i > 0:
+                    alignment[i-1]["end"] += (alignment[i]['end'] - alignment[i]['start'])/1.5
         merge_punctuations(alignment, prepend_punctuations, append_punctuations)
 
         time_offset = (
