@@ -635,7 +635,7 @@ class WhisperModel:
                 kwargs = {
                     "beam_size": 1,
                     "num_hypotheses": options.best_of,
-                    "repetition_penalty": 1.2,
+                    "repetition_penalty": options.repetition_penalty,  # On retries
                     "sampling_topk": 0,
                     "sampling_temperature": temperature,
                 }
@@ -643,7 +643,7 @@ class WhisperModel:
                 kwargs = {
                     "beam_size": options.beam_size,
                     "patience": options.patience,
-                    "repetition_penalty": options.repetition_penalty,
+                    "repetition_penalty": 1.0,  # 1st pass
                 }
 
             result = self.model.generate(
