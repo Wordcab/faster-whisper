@@ -3,7 +3,16 @@ import logging
 import os
 import zlib
 
-from typing import BinaryIO, Iterable, List, NamedTuple, Optional, Tuple, Union
+from typing import (
+    BinaryIO,
+    Dict,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    Tuple,
+    Union,
+)
 
 import ctranslate2
 import numpy as np
@@ -186,6 +195,7 @@ class WhisperModel:
         append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
         vad_filter: bool = False,
         vad_parameters: Optional[Union[dict, VadOptions]] = None,
+        speech_chunks: Optional[List[Dict[str, int]]] = None,
     ) -> Tuple[Iterable[Segment], TranscriptionInfo]:
         """Transcribes an input file.
 
@@ -236,6 +246,9 @@ class WhisperModel:
             https://github.com/snakers4/silero-vad.
           vad_parameters: Dictionary of Silero VAD parameters or VadOptions class (see available
             parameters and default values in the class `VadOptions`).
+          speech_chunks: List of dictionaries with start and end timestamps of speech chunks.
+            If provided, the VAD filter will not be applied and the audio will be split into
+            chunks according to the provided timestamps.
 
         Returns:
           A tuple with:
@@ -255,11 +268,14 @@ class WhisperModel:
         )
 
         if vad_filter:
-            if vad_parameters is None:
-                vad_parameters = VadOptions()
-            elif isinstance(vad_parameters, dict):
-                vad_parameters = VadOptions(**vad_parameters)
-            speech_chunks = get_speech_timestamps(audio, vad_parameters)
+            if speech_chunks is None:
+                if vad_parameters is None:
+                    vad_parameters = VadOptions()
+                elif isinstance(vad_parameters, dict):
+                    vad_parameters = VadOptions(**vad_parameters)
+
+                speech_chunks = get_speech_timestamps(audio, vad_parameters)
+
             audio = collect_chunks(audio, speech_chunks)
 
             self.logger.info(
