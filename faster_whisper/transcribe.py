@@ -395,6 +395,11 @@ class WhisperModel:
         all_tokens = []
         prompt_reset_since = 0
 
+        exclamation_token = tokenizer.encode("!")
+        question_token = tokenizer.encode("?")
+        period_token = tokenizer.encode(".")
+        comma_token = tokenizer.encode(",")
+
         if options.initial_prompt is not None:
             if isinstance(options.initial_prompt, str):
                 initial_prompt = " " + options.initial_prompt.strip()
@@ -418,6 +423,12 @@ class WhisperModel:
                 )
 
             previous_tokens = all_tokens[prompt_reset_since:]
+
+            previous_tokens.extend(exclamation_token)
+            previous_tokens.extend(question_token)
+            previous_tokens.extend(period_token)
+            previous_tokens.extend(comma_token)
+
             prompt = self.get_prompt(
                 tokenizer,
                 previous_tokens,
