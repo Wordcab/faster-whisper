@@ -666,7 +666,6 @@ class WhisperModel:
                 encoder_output,
                 [prompt],
                 length_penalty=options.length_penalty,
-                repetition_penalty=options.repetition_penalty,
                 no_repeat_ngram_size=options.no_repeat_ngram_size,
                 max_length=self.max_length,
                 return_scores=True,
