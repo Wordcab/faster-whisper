@@ -57,6 +57,7 @@ class TranscriptionOptions(NamedTuple):
     patience: float
     length_penalty: float
     repetition_penalty: float
+    no_repeat_ngram_size: int
     log_prob_threshold: Optional[float]
     no_speech_threshold: Optional[float]
     compression_ratio_threshold: Optional[float]
@@ -78,6 +79,7 @@ class TranscriptionInfo(NamedTuple):
     language: str
     language_probability: float
     duration: float
+    duration_after_vad: float
     all_language_probs: Optional[List[Tuple[str, float]]]
     transcription_options: TranscriptionOptions
     vad_options: VadOptions
@@ -99,7 +101,7 @@ class WhisperModel:
 
         Args:
           model_size_or_path: Size of the model to use (tiny, tiny.en, base, base.en,
-            small, small.en, medium, medium.en, large-v1, or large-v2), a path to a converted
+            small, small.en, medium, medium.en, large-v1, large-v2, or large), a path to a converted
             model directory, or a CTranslate2-converted Whisper model ID from the Hugging Face Hub.
             When a size or a model ID is configured, the converted model is downloaded
             from the Hugging Face Hub.
@@ -171,6 +173,7 @@ class WhisperModel:
         patience: float = 1,
         length_penalty: float = 1,
         repetition_penalty: float = 1,
+        no_repeat_ngram_size: int = 0,
         temperature: Union[float, List[float], Tuple[float, ...]] = [
             0.0,
             0.2,
@@ -211,6 +214,7 @@ class WhisperModel:
           length_penalty: Exponential length penalty constant.
           repetition_penalty: Penalty applied to the score of previously generated tokens
             (set > 1 to penalize).
+          no_repeat_ngram_size: Prevent repetitions of ngrams with this size (set 0 to disable).
           temperature: Temperature for sampling. It can be a tuple of temperatures,
             which will be successively used upon failures according to either
             `compression_ratio_threshold` or `log_prob_threshold`.
@@ -262,6 +266,7 @@ class WhisperModel:
             audio = decode_audio(audio, sampling_rate=sampling_rate)
 
         duration = audio.shape[0] / sampling_rate
+        duration_after_vad = duration
 
         self.logger.info(
             "Processing audio with duration %s", format_timestamp(duration)
@@ -277,10 +282,11 @@ class WhisperModel:
                 speech_chunks = get_speech_timestamps(audio, vad_parameters)
 
             audio = collect_chunks(audio, speech_chunks)
+            duration_after_vad = audio.shape[0] / sampling_rate
 
             self.logger.info(
                 "VAD filter removed %s of audio",
-                format_timestamp(duration - (audio.shape[0] / sampling_rate)),
+                format_timestamp(duration - duration_after_vad),
             )
 
             if self.logger.isEnabledFor(logging.DEBUG):
@@ -325,6 +331,13 @@ class WhisperModel:
                     language_probability,
                 )
         else:
+            if not self.model.is_multilingual and language != "en":
+                self.logger.warning(
+                    "The current model is English-only but the language parameter is set to '%s'; "
+                    "using 'en' instead." % language
+                )
+                language = "en"
+
             language_probability = 1
 
         tokenizer = Tokenizer(
@@ -340,6 +353,7 @@ class WhisperModel:
             patience=patience,
             length_penalty=length_penalty,
             repetition_penalty=repetition_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
             log_prob_threshold=log_prob_threshold,
             no_speech_threshold=no_speech_threshold,
             compression_ratio_threshold=compression_ratio_threshold,
@@ -374,6 +388,7 @@ class WhisperModel:
             language=language,
             language_probability=language_probability,
             duration=duration,
+            duration_after_vad=duration_after_vad,
             transcription_options=options,
             vad_options=vad_parameters,
             all_language_probs=all_language_probs,
@@ -651,6 +666,8 @@ class WhisperModel:
                 encoder_output,
                 [prompt],
                 length_penalty=options.length_penalty,
+                repetition_penalty=options.repetition_penalty,
+                no_repeat_ngram_size=options.no_repeat_ngram_size,
                 max_length=self.max_length,
                 return_scores=True,
                 return_no_speech_prob=True,
