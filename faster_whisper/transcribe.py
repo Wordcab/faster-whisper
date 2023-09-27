@@ -20,7 +20,7 @@ import tokenizers
 
 from faster_whisper.audio import decode_audio
 from faster_whisper.feature_extractor import FeatureExtractor
-from faster_whisper.tokenizer import Tokenizer
+from faster_whisper.tokenizer import _LANGUAGE_CODES, Tokenizer
 from faster_whisper.utils import download_model, format_timestamp, get_logger
 from faster_whisper.vad import (
     SpeechTimestampsMap,
@@ -162,6 +162,11 @@ class WhisperModel:
         self.input_stride = 2
         self.time_precision = 0.02
         self.max_length = 448
+
+    @property
+    def supported_languages(self) -> List[str]:
+        """The languages supported by the model."""
+        return list(_LANGUAGE_CODES) if self.model.is_multilingual else ["en"]
 
     def transcribe(
         self,
@@ -440,7 +445,7 @@ class WhisperModel:
                 prefix=options.prefix if seek == 0 else None,
             )
 
-            if encoder_output is None:
+            if seek > 0 or encoder_output is None:
                 encoder_output = self.encode(segment)
 
             (
@@ -470,7 +475,6 @@ class WhisperModel:
 
                     # fast-forward to the next segment boundary
                     seek += segment_size
-                    encoder_output = None
                     continue
 
             tokens = result.sequences_ids[0]
@@ -577,8 +581,6 @@ class WhisperModel:
 
                     if seek_shift > 0:
                         seek = previous_seek + seek_shift
-
-            encoder_output = None
 
             for segment in current_segments:
                 tokens = segment["tokens"]
@@ -775,8 +777,8 @@ class WhisperModel:
         prepend_punctuations: str,
         append_punctuations: str,
         last_speech_timestamp: float,
-        speech_chunks: List[dict] = None
-    ):
+        speech_chunks: List[dict] = None,
+    ) -> None:
         if len(segments) == 0:
             return
 
@@ -984,7 +986,10 @@ def get_compression_ratio(text: str) -> float:
     return len(text_bytes) / len(zlib.compress(text_bytes))
 
 
-def get_suppressed_tokens(tokenizer, suppress_tokens):
+def get_suppressed_tokens(
+    tokenizer: Tokenizer,
+    suppress_tokens: Optional[List[int]],
+) -> Optional[List[int]]:
     if not suppress_tokens or -1 in suppress_tokens:
         return suppress_tokens
 
@@ -1005,7 +1010,7 @@ def get_suppressed_tokens(tokenizer, suppress_tokens):
     return sorted(set(suppress_tokens))
 
 
-def merge_punctuations(alignment: List[dict], prepended: str, appended: str):
+def merge_punctuations(alignment: List[dict], prepended: str, appended: str) -> None:
     # merge prepended punctuations
     i = len(alignment) - 2
     j = len(alignment) - 1
