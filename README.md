@@ -108,22 +108,7 @@ Purfview's [whisper-standalone-win](https://github.com/Purfview/whisper-standalo
 The module can be installed from [PyPI](https://pypi.org/project/faster-whisper/):
 
 ```bash
-pip install faster-whisper
-```
-
-<details>
-<summary>Other installation methods (click to expand)</summary>
-
-### Install the master branch
-
-```bash
-pip install --force-reinstall "faster-whisper @ https://github.com/guillaumekln/faster-whisper/archive/refs/heads/master.tar.gz"
-```
-
-### Install a specific commit
-
-```bash
-pip install --force-reinstall "faster-whisper @ https://github.com/guillaumekln/faster-whisper/archive/a4f1cc8f11433e454c3934442b5e1a4ed5e865c3.tar.gz"
+pip install faster-whisper+https://github.com/Wordcab/faster-whisper@master
 ```
 
 </details>
